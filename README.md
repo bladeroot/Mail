@@ -1,6 +1,8 @@
 ![logo](http://eden.openovate.com/assets/images/cloud-social.png) Eden Mail
 ====
-[![Build Status](https://api.travis-ci.org/Eden-PHP/Mail.png)](https://travis-ci.org/Eden-PHP/Mail)
+[![Build Status](https://api.travis-ci.org/bladeroot/Mail.png)](https://travis-ci.org/bladeroot/Mail)
+====
+This is fork of Eden-PHP/Mail
 ====
 
 - [Install](#install)
