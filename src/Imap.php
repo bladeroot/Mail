@@ -18,47 +18,15 @@ namespace Bladeroot\Mail;
  * @author   Airon Paul Dumael <airon.dumael@gmail.com>
  * @standard PSR-2
  */
-class Imap extends Base
+class Imap extends ReceiveServer
 {
     /**
-     * @const int TIMEOUT Connection timeout
+     * @var array $ports The Imap port
      */
-    const TIMEOUT = 30;
-
-    /**
-     * @const string NO_SUBJECT Default subject
-     */
-    const NO_SUBJECT = '(no subject)';
-
-    /**
-     * @var string $host The IMAP Host
-     */
-    protected $host = null;
-
-    /**
-     * @var string|null $port The IMAP port
-     */
-    protected $port = null;
-
-    /**
-     * @var bool $ssl Whether to use SSL
-     */
-    protected $ssl = false;
-
-    /**
-     * @var bool $tls Whether to use TLS
-     */
-    protected $tls = false;
-
-    /**
-     * @var string|null $username The mailbox user name
-     */
-    protected $username = null;
-
-    /**
-     * @var string|null $password The mailbox password
-     */
-    protected $password = null;
+    protected $ports = [
+        'secured' => 993,
+        'default' => 143,
+    ];
 
     /**
      * @var int $tag The tag number
@@ -81,11 +49,6 @@ class Imap extends Base
     protected $buffer = null;
 
     /**
-     * @var [RESOURCE] $socket The socket connection
-     */
-    protected $socket = null;
-
-    /**
      * @var string|null $mailbox The mailbox name
      */
     protected $mailbox = null;
@@ -93,87 +56,11 @@ class Imap extends Base
     /**
      * @var array $mailboxes The list of mailboxes
      */
-    protected $mailboxes = array();
+    protected $mailboxes = [];
 
-    /**
-     * @var bool $debugging If true outputs the logs
-     */
-    private $debugging = false;
-
-    /**
-     * Constructor - Store connection information
-     *
-     * @param *string  $host The IMAP host
-     * @param *string  $user The mailbox user name
-     * @param *string  $pass The mailbox password
-     * @param int|null $port The IMAP port
-     * @param bool     $ssl  Whether to use SSL
-     * @param bool     $tls  Whether to use TLS
-     */
-    public function __construct(
-        $host,
-        $user,
-        $pass,
-        $port = null,
-        $ssl = false,
-        $tls = false
-    ) {
-        Argument::i()
-            ->test(1, 'string')
-            ->test(2, 'string')
-            ->test(3, 'string')
-            ->test(4, 'int', 'null')
-            ->test(5, 'bool')
-            ->test(6, 'bool');
-
-        if (is_null($port)) {
-            $port = $ssl ? 993 : 143;
-        }
-
-        $this->host = $host;
-        $this->username = $user;
-        $this->password = $pass;
-        $this->port = $port;
-        $this->ssl = $ssl;
-        $this->tls = $tls;
-    }
-
-    /**
-     * Connects to the server
-     *
-     * @param int  $timeout The connection timeout
-     * @param bool $test    Whether to output the logs
-     *
-     * @return Eden\Mail\Imap
-     */
-    public function connect($timeout = self::TIMEOUT, $test = false)
+    protected function connectCheckAnswer()
     {
-        Argument::i()->test(1, 'int')->test(2, 'bool');
-
-        if ($this->socket) {
-            return $this;
-        }
-
-        $host = $this->host;
-
-        if ($this->ssl) {
-            $host = 'ssl://' . $host;
-        }
-
-        $errno  =  0;
-        $errstr = '';
-
-        $this->socket = @fsockopen($host, $this->port, $errno, $errstr, $timeout);
-
-        if (!$this->socket) {
-            //throw exception
-            Exception::i()
-                ->setMessage(Exception::SERVER_ERROR)
-                ->addVariable($host.':'.$this->port)
-                ->trigger();
-        }
-
-        if (strpos($this->getLine(), '* OK') === false) {
+        if (strpos($this->receive(), '* OK') === false) {
             $this->disconnect();
             //throw exception
             Exception::i()
@@ -182,26 +69,26 @@ class Imap extends Base
                 ->trigger();
         }
 
-        if ($this->tls) {
-            $this->send('STARTTLS');
-            if (!stream_socket_enable_crypto($this->socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
-                $this->disconnect();
-                //throw exception
-                Exception::i()
-                ->setMessage(Exception::TLS_ERROR)
-                ->addVariable($host.':'.$this->port)
-                ->trigger();
-            }
+        return $this;
+    }
+
+    protected function connectEnableTLS()
+    {
+        $this->send('STARTTLS');
+        if (!stream_socket_enable_crypto($this->socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
+            $this->disconnect();
+            //throw exception
+            Exception::i()
+            ->setMessage(Exception::TLS_ERROR)
+            ->addVariable($host.':'.$this->port)
+            ->trigger();
         }
 
-        if ($test) {
-            fclose($this->socket);
+        return $this;
+    }
 
-            $this->socket = null;
-            return $this;
-        }
-
-        //login
+    protected function authorized()
+    {
         $result = $this->call('LOGIN', $this->escape($this->username, $this->password));
 
         if (!is_array($result) || strpos(implode(' ', $result), 'OK') === false) {
@@ -210,26 +97,16 @@ class Imap extends Base
             Exception::i(Exception::LOGIN_ERROR)->trigger();
         }
 
+        $this->isLoggedIn = true;
         return $this;
+
     }
 
-    /**
-     * Disconnects from the server
-     *
-     * @return Eden\Mail\Imap
-     */
-    public function disconnect()
+    protected function logout()
     {
-        if ($this->socket) {
-            $this->send('LOGOUT');
-
-            fclose($this->socket);
-
-            $this->socket = null;
-        }
-
-        return $this;
+        $this->send('LOGOUT');
     }
+
 
     /**
      * Returns the active mailbox
@@ -267,7 +144,7 @@ class Imap extends Base
         //or the mailbox selected is empty
         if ($this->total == 0) {
             //we might as well return an empty array
-            return array();
+            return [];
         }
 
         //if start is an array
@@ -310,14 +187,14 @@ class Imap extends Base
             }
         }
 
-        $items = array('UID', 'FLAGS', 'BODY[HEADER]');
+        $items = ['UID', 'FLAGS', 'BODY[HEADER]'];
 
         if ($body) {
-            $items  = array('UID', 'FLAGS', 'BODY[]');
+            $items  = ['UID', 'FLAGS', 'BODY[]'];
         }
 
         //now lets call this
-        $emails = $this->getEmailResponse('FETCH', array($set, $this->getList($items)));
+        $emails = $this->getEmailResponse('FETCH', [$set, $this->getList($items)]);
 
         //this will be in ascending order
         //we actually want to reverse this
@@ -359,7 +236,7 @@ class Imap extends Base
 
         $response = $this->call('LIST', $this->escape('', '*'));
 
-        $mailboxes = array();
+        $mailboxes = [];
         foreach ($response as $line) {
             if (strpos($line, 'Noselect') !== false || strpos($line, 'LIST') == false) {
                 continue;
@@ -402,7 +279,7 @@ class Imap extends Base
         //or the mailbox selected is empty
         if ($this->total == 0) {
             //we might as well return an empty array
-            return array();
+            return [];
         }
 
         //if uid is an array
@@ -411,15 +288,15 @@ class Imap extends Base
         }
 
         //lets call it
-        $items = array('UID', 'FLAGS', 'BODY[HEADER]');
+        $items = ['UID', 'FLAGS', 'BODY[HEADER]'];
 
         if ($body) {
-            $items = array('UID', 'FLAGS', 'BODY[]');
+            $items = ['UID', 'FLAGS', 'BODY[]'];
         }
 
         $first = is_numeric($uid) ? true : false;
 
-        return $this->getEmailResponse('UID FETCH', array($uid, $this->getList($items)), $first);
+        return $this->getEmailResponse('UID FETCH', [$uid, $this->getList($items)], $first);
     }
 
     /**
@@ -505,7 +382,7 @@ class Imap extends Base
         }
 
         //build a search criteria
-        $search = $not = array();
+        $search = $not = [];
         foreach ($filter as $where) {
             if (is_string($where)) {
                 $search[] = $where;
@@ -567,7 +444,7 @@ class Imap extends Base
             }
 
             if (empty($uids)) {
-                return array();
+                return [];
             }
 
             $uids = array_reverse($uids);
@@ -593,7 +470,7 @@ class Imap extends Base
         }
 
         //it's not okay just return an empty set
-        return array();
+        return [];
     }
 
     /**
@@ -613,7 +490,7 @@ class Imap extends Base
         }
 
         //build a search criteria
-        $search = array();
+        $search = [];
         foreach ($filter as $where) {
             $item = $where[0].' "'.$where[1].'"';
             if (isset($where[2])) {
@@ -699,13 +576,13 @@ class Imap extends Base
      *
      * @return string|false
      */
-    protected function call($command, $parameters = array())
+    protected function call($command, $parameters = [])
     {
         if (!$this->send($command, $parameters)) {
             return false;
         }
 
-        return $this->receive($this->tag);
+        return $this->receiveTag($this->tag);
     }
 
     /**
@@ -713,7 +590,7 @@ class Imap extends Base
      *
      * @return string
      */
-    protected function getLine()
+    protected function receive($multiline = false)
     {
         $line = fgets($this->socket);
 
@@ -733,14 +610,13 @@ class Imap extends Base
      *
      * @return string
      */
-    protected function receive($sentTag)
+    protected function receiveTag($sentTag)
     {
-        $this->buffer = array();
-
+        $this->buffer = [];
         $start = time();
 
         while (time() < ($start + self::TIMEOUT)) {
-            list($receivedTag, $line) = explode(' ', $this->getLine(), 2);
+            list($receivedTag, $line) = explode(' ', $this->receive(),2);
             $this->buffer[] = trim($receivedTag . ' ' . $line);
             if ($receivedTag == 'TAG'.$sentTag) {
                 return $this->buffer;
@@ -758,14 +634,14 @@ class Imap extends Base
      *
      * @return bool
      */
-    protected function send($command, $parameters = array())
+    protected function send($command, $parameters = [])
     {
         $this->tag ++;
 
         $line = 'TAG' . $this->tag . ' ' . $command;
 
         if (!is_array($parameters)) {
-            $parameters = array($parameters);
+            $parameters = [$parameters];
         }
 
         foreach ($parameters as $parameter) {
@@ -774,7 +650,7 @@ class Imap extends Base
                     return false;
                 }
 
-                if (strpos($this->getLine(), '+ ') === false) {
+                if (strpos($this->receive(), '+ ') === false) {
                     return false;
                 }
 
@@ -819,13 +695,13 @@ class Imap extends Base
     {
         if (func_num_args() < 2) {
             if (strpos($string, "\n") !== false) {
-                return array('{' . strlen($string) . '}', $string);
+                return ['{' . strlen($string) . '}', $string];
             } else {
-                return '"' . str_replace(array('\\', '"'), array('\\\\', '\\"'), $string) . '"';
+                return '"' . str_replace(['\\', '"'], ['\\\\', '\\"'], $string) . '"';
             }
         }
 
-        $result = array();
+        $result = [];
         foreach (func_get_args() as $string) {
             $result[] = $this->escape($string);
         }
@@ -843,7 +719,7 @@ class Imap extends Base
      *
      * @return array
      */
-    private function getEmailFormat($email, $uniqueId = null, array $flags = array())
+    private function getEmailFormat($email, $uniqueId = null, array $flags = [])
     {
         //if email is an array
         if (is_array($email)) {
@@ -861,7 +737,7 @@ class Imap extends Base
         }
 
         $lines = explode("\n", $head);
-        $head = array();
+        $head = [];
         foreach ($lines as $line) {
             if (trim($line) && preg_match("/^\s+/", $line)) {
                 $head[count($head)-1] .= ' '.trim($line);
@@ -873,7 +749,7 @@ class Imap extends Base
 
         $head = implode("\n", $head);
 
-        $recipientsTo = $recipientsCc = $recipientsBcc = $sender = array();
+        $recipientsTo = $recipientsCc = $recipientsBcc = $sender = [];
 
         //get the headers
         $headers1   = imap_rfc822_parse_headers($head);
@@ -891,68 +767,6 @@ class Imap extends Base
         }
 
         $sender['email'] = $headers1->from[0]->mailbox . '@' . $headers1->from[0]->host;
-
-        //set the to
-        if (isset($headers1->to)) {
-            foreach ($headers1->to as $to) {
-                if (!isset($to->mailbox, $to->host)) {
-                    continue;
-                }
-
-                $recipient = array('name'=>null);
-                if (isset($to->personal)) {
-                    $recipient['name'] = $to->personal;
-                    //if the name is iso or utf encoded
-                    if (preg_match("/^\=\?[a-zA-Z]+\-[0-9]+.*\?/", strtolower($recipient['name']))) {
-                        //decode the subject
-                        $recipient['name'] = str_replace('_', ' ', mb_decode_mimeheader($recipient['name']));
-                    }
-                }
-
-                $recipient['email'] = $to->mailbox . '@' . $to->host;
-
-                $recipientsTo[] = $recipient;
-            }
-        }
-
-        //set the cc
-        if (isset($headers1->cc)) {
-            foreach ($headers1->cc as $cc) {
-                $recipient = array('name'=>null);
-                if (isset($cc->personal)) {
-                    $recipient['name'] = $cc->personal;
-
-                    //if the name is iso or utf encoded
-                    if (preg_match("/^\=\?[a-zA-Z]+\-[0-9]+.*\?/", strtolower($recipient['name']))) {
-                        //decode the subject
-                        $recipient['name'] = str_replace('_', ' ', mb_decode_mimeheader($recipient['name']));
-                    }
-                }
-
-                $recipient['email'] = $cc->mailbox . '@' . $cc->host;
-
-                $recipientsCc[] = $recipient;
-            }
-        }
-
-        //set the bcc
-        if (isset($headers1->bcc)) {
-            foreach ($headers1->bcc as $bcc) {
-                $recipient = array('name'=>null);
-                if (isset($bcc->personal)) {
-                    $recipient['name'] = $bcc->personal;
-                    //if the name is iso or utf encoded
-                    if (preg_match("/^\=\?[a-zA-Z]+\-[0-9]+.*\?/", strtolower($recipient['name']))) {
-                        //decode the subject
-                        $recipient['name'] = str_replace('_', ' ', mb_decode_mimeheader($recipient['name']));
-                    }
-                }
-
-                $recipient['email'] = $bcc->mailbox . '@' . $bcc->host;
-
-                $recipientsBcc[] = $recipient;
-            }
-        }
 
         //if subject is not set
         if (!isset($headers1->subject) || strlen(trim($headers1->subject)) === 0) {
@@ -984,9 +798,9 @@ class Imap extends Base
         }
 
         $attachment = isset($headers2['content-type'])
-        && strpos($headers2['content-type'], 'multipart/mixed') === 0;
+            && strpos($headers2['content-type'], 'multipart/mixed') === 0;
 
-        $format = array(
+        $format = [
             'id'            => $messageId,
             'parent'        => $parent,
             'topic'         => $topic,
@@ -996,10 +810,12 @@ class Imap extends Base
             'subject'       => str_replace('’', '\'', $headers1->subject),
             'from'          => $sender,
             'flags'         => $flags,
-            'to'            => $recipientsTo,
-            'cc'            => $recipientsCc,
-            'bcc'           => $recipientsBcc,
-            'attachment'    => $attachment);
+            'to'            => $this->getEmailRecipients($header1, 'to'),
+            'cc'            => $this->getEmailRecipients($header1, 'cc'),
+            'bcc'           => $this->getEmailRecipients($header1, 'bcc'),
+            'attachment'    => $attachment,
+            'raw'           => $email,
+        ];
 
         if (trim($body) && $body != ')') {
             //get the body parts
@@ -1015,7 +831,7 @@ class Imap extends Base
             $body = $parts;
 
             //look for attachments
-            $attachment = array();
+            $attachment = [];
             //if there is an attachment in the body
             if (isset($body['attachment'])) {
                 //take it out
@@ -1040,7 +856,7 @@ class Imap extends Base
      *
      * @return array
      */
-    private function getEmailResponse($command, $parameters = array(), $first = false)
+    private function getEmailResponse($command, $parameters = [], $first = false)
     {
         //send out the command
         if (!$this->send($command, $parameters)) {
@@ -1048,13 +864,13 @@ class Imap extends Base
         }
 
         $messageId  = $uniqueId = $count = 0;
-        $emails     = $email = array();
+        $emails     = $email = [];
         $start      = time();
 
         //while there is no hang
         while (time() < ($start + self::TIMEOUT)) {
             //get a response line
-            $line = str_replace("\n", '', $this->getLine());
+            $line = str_replace("\n", '', $this->receive());
 
             //if the line starts with a fetch
             //it means it's the end of getting an email
@@ -1071,7 +887,7 @@ class Imap extends Base
                     }
 
                     //make email data empty again
-                    $email = array();
+                    $email = [];
                 }
 
                 //if just okay
@@ -1082,7 +898,7 @@ class Imap extends Base
 
                 //if it's not just ok
                 //it will contain the message id and the unique id and flags
-                $flags = array();
+                $flags = [];
                 if (strpos($line, '\Answered') !== false) {
                     $flags[] = 'answered';
                 }
@@ -1165,7 +981,7 @@ class Imap extends Base
         }
 
         $key = null;
-        $headers = array();
+        $headers = [];
         foreach ($rawData as $line) {
             $line = trim($line);
             if (preg_match("/^([a-zA-Z0-9-]+):/i", $line, $matches)) {
@@ -1206,7 +1022,7 @@ class Imap extends Base
      */
     private function getList($array)
     {
-        $list = array();
+        $list = [];
         foreach ($array as $key => $value) {
             $list[] = !is_array($value) ? $value : $this->getList($v);
         }
@@ -1223,11 +1039,10 @@ class Imap extends Base
      *
      * @return array
      */
-    private function getParts($content, array $parts = array())
+    private function getParts($content, array $parts = [])
     {
         //separate the head and the body
         list($head, $body) = preg_split("/\n\s*\n/", $content, 2);
-        //front()->output($head);
         //get the headers
         $head = $this->getHeaders($head);
         //if content type is not set
@@ -1246,7 +1061,7 @@ class Imap extends Base
         }
 
         //see if there are any extra stuff
-        $extra = array();
+        $extra = [];
         if (count($type) == 2) {
             $extra = explode('; ', str_replace(array('"', "'"), '', trim($type[1])));
         }

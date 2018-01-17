@@ -18,128 +18,83 @@ namespace Bladeroot\Mail;
  * @author   Airon Paul Dumael <airon.dumael@gmail.com>
  * @standard PSR-2
  */
-class Smtp extends Base
+class Smtp extends Server
 {
     /**
-     * @const int TIMEOUT Connection timeout
+     * @var array $ports The POP3 port
      */
-    const TIMEOUT = 30;
-
-    /**
-     * @var string $host The SMTP Host
-     */
-    protected $host = null;
-
-    /**
-     * @var string|null $port The SMTP port
-     */
-    protected $port = null;
-
-    /**
-     * @var bool $ssl Whether to use SSL
-     */
-    protected $ssl = false;
-
-    /**
-     * @var bool $tls Whether to use TLS
-     */
-    protected $tls = false;
-
-    /**
-     * @var string|null $username The mailbox user name
-     */
-    protected $username = null;
-
-    /**
-     * @var string|null $password The mailbox password
-     */
-    protected $password = null;
-
-    /**
-     * @var [RESOURCE] $socket The socket connection
-     */
-    protected $socket = null;
+    protected $ports = [
+        'secured' => 465,
+        'default' => 25,
+    ];
 
     /**
      * @var array $boundary The list of boundaries
      */
-    protected $boundary = array();
-
-    /**
-     * @var array $subject The mail subject
-     */
-    protected $subject  = null;
+    protected $boundary = [];
 
     /**
      * @var array $body Body content types
      */
-    protected $body = array();
+    protected $body = [];
 
     /**
      * @var array $to The list of main recipients
      */
-    protected $to = array();
+    protected $to = [];
 
     /**
      * @var array $cc The list of carbon copies
      */
-    protected $cc = array();
+    protected $cc = [];
 
     /**
      * @var array $bcc The list of BCCs sorry i forgot what this stood for :(
      */
-    protected $bcc = array();
+    protected $bcc = [];
 
     /**
      * @var array $attachments The list of attachments
      */
-    protected $attachments = array();
-
-    /**
-     * @var bool $debugging If true outputs the logs
-     */
-    private $debugging = false;
+    protected $attachments = [];
 
     /**
      * Constructor - Store connection information
      *
-     * @param *string  $host The SMTP host
-     * @param *string  $user The mailbox user name
-     * @param *string  $pass The mailbox password
-     * @param int|null $port The SMTP port
-     * @param bool     $ssl  Whether to use SSL
-     * @param bool     $tls  Whether to use TLS
+     * @param *string  $host      The SMTP host
+     * @param *string  $username  The mailbox user name
+     * @param *string  $password  The mailbox password
+     * @param int|null $port      The SMTP port
+     * @param bool     $ssl       Whether to use SSL
+     * @param bool     $tls       Whether to use TLS
+     * @param bool     $debugging Whether to enable debug
      */
     public function __construct(
         $host,
-        $user,
-        $pass,
+        $username,
+        $password,
         $port = null,
         $ssl = false,
-        $tls = false
+        $tls = false,
+        $debuging = false
     ) {
-        Argument::i()
-            ->test(1, 'string')
-            ->test(2, 'string')
-            ->test(3, 'string')
-            ->test(4, 'int', 'null')
-            ->test(5, 'bool')
-            ->test(6, 'bool');
-
-        if (is_null($port)) {
-            $port = $ssl ? 465 : 25;
-        }
-
-        $this->host         = $host;
-        $this->username     = $user;
-        $this->password     = $pass;
-        $this->port         = $port;
-        $this->ssl      = $ssl;
-        $this->tls      = $tls;
-
         $this->boundary[] = md5(time().'1');
         $this->boundary[] = md5(time().'2');
+        parent::__construct($host,$username,$password,$port,$ssl,$tls,$debuging);
     }
+
+    /**
+     * @return host with schrema if needed
+     */
+    protected function connectionAddHostSchrema()
+    {
+        if ($this->ssl) {
+            return "ssl://{$this->host}";
+        }
+
+        return "tcp://{$this->host}";
+    }
+
 
     /**
      * Adds an attachment to the email
@@ -225,43 +180,7 @@ class Smtp extends Base
      */
     public function connect($timeout = self::TIMEOUT, $test = false)
     {
-        Argument::i()
-            ->test(1, 'int')
-            ->test(2, 'bool');
-
-        $host = $this->host;
-
-        if ($this->ssl) {
-            $host = 'ssl://' . $host;
-        } else {
-            $host = 'tcp://' . $host;
-        }
-
-        $errno  =  0;
-        $errstr = '';
-        $this->socket = @stream_socket_client($host.':'.$this->port, $errno, $errstr, $timeout);
-
-        if (!$this->socket || strlen($errstr) > 0 || $errno > 0) {
-            //throw exception
-            Exception::i()
-                ->setMessage(Exception::SERVER_ERROR)
-                ->addVariable($host.':'.$this->port)
-                ->trigger();
-        }
-
-        $this->receive();
-
-        if (!$this->call('EHLO '.$_SERVER['HTTP_HOST'], 250)
-        && !$this->call('HELO '.$_SERVER['HTTP_HOST'], 250)) {
-            $this->disconnect();
-            //throw exception
-            Exception::i()
-                ->setMessage(Exception::SERVER_ERROR)
-                ->addVariable($host.':'.$this->port)
-                ->trigger();
-        }
-
-        if ($this->tls && !$this->call('STARTTLS', 220, 250)) {
+        if ($this->tls && !$this->call('STARTTLS', [220, 250])) {
             if (!stream_socket_enable_crypto($this->socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
                 $this->disconnect();
                 //throw exception
@@ -288,7 +207,7 @@ class Smtp extends Base
         }
 
         //login
-        if (!$this->call('AUTH LOGIN', 250, 334)) {
+        if (!$this->call('AUTH LOGIN', [250, 334])) {
             $this->disconnect();
             //throw exception
             Exception::i(Exception::LOGIN_ERROR)->trigger();
@@ -300,7 +219,7 @@ class Smtp extends Base
             Exception::i()->setMessage(Exception::LOGIN_ERROR);
         }
 
-        if (!$this->call(base64_encode($this->password), 235, 334)) {
+        if (!$this->call(base64_encode($this->password), [235, 334])) {
             $this->disconnect();
             //throw exception
             Exception::i()->setMessage(Exception::LOGIN_ERROR);
@@ -308,6 +227,43 @@ class Smtp extends Base
 
         return $this;
     }
+
+    protected function connectCheckAnswer()
+    {
+        $this->receive();
+
+        if (!$this->call('EHLO '.$_SERVER['HTTP_HOST'], 250)
+        && !$this->call('HELO '.$_SERVER['HTTP_HOST'], 250)) {
+            $this->disconnect();
+            //throw exception
+            Exception::i()
+                ->setMessage(Exception::SERVER_ERROR)
+                ->addVariable($host.':'.$this->port)
+                ->trigger();
+        }
+
+        return $this;
+    }
+
+    protected function connectEnableTLS()
+    {
+        if ($this->call('STARTTLS', [220, 250])) {
+            return $this;
+        }
+
+        if (!stream_socket_enable_crypto($this->socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
+            $this->disconnect();
+            //throw exception
+            Exception::i()
+                ->setMessage(Exception::TLS_ERROR)
+                ->addVariable($host.':'.$this->port)
+                ->trigger();
+        }
+
+        return $this;
+    }
+
+
 
     /**
      * Disconnects from the server
@@ -349,7 +305,7 @@ class Smtp extends Base
         }
 
         //add from
-        if (!$this->call('MAIL FROM:<' . $this->username . '>', 250, 251)) {
+        if (!$this->call('MAIL FROM:<' . $this->username . '>', [250, 251])) {
             $this->disconnect();
             //throw exception
             Exception::i()
@@ -359,38 +315,20 @@ class Smtp extends Base
         }
 
         //add to
-        foreach ($this->to as $email => $name) {
-            if (!$this->call('RCPT TO:<' . $email . '>', 250, 251)) {
-                $this->disconnect();
-                //throw exception
-                Exception::i()
-                    ->setMessage(Exception::SMTP_ADD_EMAIL)
-                    ->addVariable($email)
-                    ->trigger();
+        foreach (['to', 'cc', 'bcc'] as $destination) {
+            if (empty($this->{$destination})) {
+                continue;
             }
-        }
 
-        //add cc
-        foreach ($this->cc as $email => $name) {
-            if (!$this->call('RCPT TO:<' . $email . '>', 250, 251)) {
-                $this->disconnect();
-                //throw exception
-                Exception::i()
-                    ->setMessage(Exception::SMTP_ADD_EMAIL)
-                    ->addVariable($email)
-                    ->trigger();
-            }
-        }
-
-        //add bcc
-        foreach ($this->bcc as $email => $name) {
-            if (!$this->call('RCPT TO:<' . $email . '>', 250, 251)) {
-                $this->disconnect();
-                //throw exception
-                Exception::i()
-                    ->setMessage(Exception::SMTP_ADD_EMAIL)
-                    ->addVariable($email)
-                    ->trigger();
+            foreach ($this->{$destination} as $email => $name) {
+                if (!$this->call('RCPT TO:<' . $email . '>', [250, 251])) {
+                    $this->disconnect();
+                    //throw exception
+                    Exception::i()
+                        ->setMessage(Exception::SMTP_ADD_EMAIL)
+                        ->addVariable($email)
+                        ->trigger();
+                }
             }
         }
 
@@ -477,7 +415,7 @@ class Smtp extends Base
         $body       = $this->getBody();
 
         //add from
-        if (!$this->call('MAIL FROM:<' . $this->username . '>', 250, 251)) {
+        if (!$this->call('MAIL FROM:<' . $this->username . '>', [250, 251])) {
             $this->disconnect();
             //throw exception
             Exception::i()
@@ -488,7 +426,7 @@ class Smtp extends Base
 
         //add to
         foreach ($this->to as $email => $name) {
-            if (!$this->call('RCPT TO:<' . $email . '>', 250, 251)) {
+            if (!$this->call('RCPT TO:<' . $email . '>', [250, 251])) {
                 $this->disconnect();
                 //throw exception
                 Exception::i()
@@ -500,7 +438,7 @@ class Smtp extends Base
 
         //add cc
         foreach ($this->cc as $email => $name) {
-            if (!$this->call('RCPT TO:<' . $email . '>', 250, 251)) {
+            if (!$this->call('RCPT TO:<' . $email . '>', [250, 251])) {
                 $this->disconnect();
                 //throw exception
                 Exception::i()
@@ -512,7 +450,7 @@ class Smtp extends Base
 
         //add bcc
         foreach ($this->bcc as $email => $name) {
-            if (!$this->call('RCPT TO:<' . $email . '>', 250, 251)) {
+            if (!$this->call('RCPT TO:<' . $email . '>',[ 250, 251])) {
                 $this->disconnect();
                 //throw exception
                 Exception::i()
@@ -646,10 +584,13 @@ class Smtp extends Base
 
         $receive = $this->receive();
 
-        $args = func_get_args();
-        if (count($args) > 1) {
-            for ($i = 1; $i < count($args); $i++) {
-                if (strpos($receive, (string)$args[$i]) === 0) {
+        if ($code !== null) {
+            if (!is_array($code)) {
+                $code = [$code];
+            }
+
+            foreach ($code as $c) {
+                if (strpos($receive, (string)$c) === 0) {
                     return true;
                 }
             }
@@ -893,7 +834,7 @@ class Smtp extends Base
      *
      * @return string
      */
-    protected function receive()
+    protected function receive($multiline = false)
     {
         $data = '';
         $now = time();
