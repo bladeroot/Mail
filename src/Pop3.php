@@ -83,7 +83,10 @@ class Pop3 extends ReceiveServer
         }
 
         $this->call('USER '.$this->username);
-        $this->call('PASS '.$this->password);
+        if ($this->call('PASS '. $this->password) === false) {
+            $this->disconnect();
+            Exception::i(Exception::LOGIN_ERROR)->trigger();
+        }
 
         $this->isLoggedIn = true;
 
@@ -105,6 +108,7 @@ class Pop3 extends ReceiveServer
      */
     public function getEmails($start = 0, $range = 10)
     {
+        $this->login();
         Argument::i()
             ->test(1, 'int')
             ->test(2, 'int');
@@ -112,7 +116,7 @@ class Pop3 extends ReceiveServer
         $total = $this->getEmailTotal();
 
         if ($total == 0) {
-            return array();
+            return [];
         }
 
         if (!is_array($start)) {
@@ -139,7 +143,7 @@ class Pop3 extends ReceiveServer
 
         $emails = array();
         for ($i = $min; $i <= $max; $i++) {
-            $emails[] = $this->getEmailFormat($this->call('RETR '.$i, true));
+            $emails[$i] = $this->call("RETR $i", true);
         }
 
         return $emails;
@@ -169,16 +173,16 @@ class Pop3 extends ReceiveServer
     {
         Argument::i()->test(1, 'int', 'string');
 
-        if (!$this->loggedin || !$this->socket) {
-            return false;
+        if (!$this->isLoggedIn || !$this->socket) {
+            $this->login();
         }
 
         if (!is_array($msgno)) {
-            $msgno = array($msgno);
+            $msgno = [$msgno];
         }
 
         foreach ($msgno as $number) {
-            $this->call('DELE '.$number);
+            $this->call("DELE $number");
         }
 
         return $this;

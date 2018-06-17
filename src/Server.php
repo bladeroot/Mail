@@ -192,7 +192,11 @@ abstract class Server extends Base
             $this->connect($timeout, $test);
         }
 
-        return $this->authorized();
+        if ($this->isLoggedIn !== true) {
+            return $this->authorized();
+        }
+
+        return $this;
     }
 
     abstract protected function logout();

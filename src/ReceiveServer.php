@@ -19,7 +19,7 @@ namespace Bladeroot\Mail;
  * @author   Yurii Myronchuk <bladeroot@gmail.com>
  * @standard PSR-2
  */
-class ReceiveServer extends Server
+abstract class ReceiveServer extends Server
 {
    /**
      * @param   object  $header
