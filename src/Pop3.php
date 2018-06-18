@@ -156,6 +156,7 @@ class Pop3 extends ReceiveServer
      */
     public function getEmailTotal()
     {
+        $this->login();
         @list($messages, $octets) = explode(' ', $this->call('STAT'));
         $messages = is_numeric($messages) ? $messages : 0;
 
